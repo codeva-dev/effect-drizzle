@@ -1,0 +1,47 @@
+{
+  "name": "@codeva-dev/effect-drizzle",
+  "version": "0.1.0-alpha.0",
+  "description": "Effect runtime integration for Drizzle clients.",
+  "license": "MIT",
+  "author": "Codeva",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "type-check": "tsc --noEmit",
+    "check": "npm run type-check && npm run test && npm run build",
+    "version:alpha": "lerna version prerelease --preid alpha",
+    "publish:alpha": "npm run check && lerna publish from-package --dist-tag alpha",
+    "release:alpha": "npm run check && lerna version prerelease --preid alpha && lerna publish from-package --dist-tag alpha"
+  },
+  "peerDependencies": {
+    "drizzle-orm": ">=0.45.0",
+    "effect": ">=3.19.0"
+  },
+  "devDependencies": {
+    "drizzle-orm": "^0.45.1",
+    "effect": "^3.19.19",
+    "lerna": "^8.2.4",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.0.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
