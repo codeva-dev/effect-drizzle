@@ -4,6 +4,10 @@
   "description": "Effect runtime integration for Drizzle clients.",
   "license": "MIT",
   "author": "Codeva",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codeva-dev/effect-drizzle.git"
+  },
   "type": "module",
   "sideEffects": false,
   "exports": {
