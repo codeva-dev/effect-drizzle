@@ -93,17 +93,18 @@ function hasSqlMarker(record: ErrorRecord): boolean {
   if (!code) return false;
 
   return (
+    isKnownSqlCode(code) ||
     record.constraint !== undefined ||
+    record.constraint_name !== undefined ||
     record.table !== undefined ||
+    record.table_name !== undefined ||
     record.column !== undefined ||
+    record.column_name !== undefined ||
     record.routine !== undefined ||
     record.sql !== undefined ||
     record.sqlMessage !== undefined ||
     record.sqlState !== undefined ||
-    record.sqlstate !== undefined ||
-    code.startsWith('SQLITE_') ||
-    /^[0-9A-Z]{5}$/.test(code) ||
-    /^\d+$/.test(code)
+    record.sqlstate !== undefined
   );
 }
 
@@ -171,6 +172,52 @@ function isTimeoutError(metadata: ErrorMetadata): boolean {
 
 function isTransactionOnlyError(metadata: ErrorMetadata): boolean {
   return metadata.code === '25000' || metadata.code === '25001' || metadata.code === '25006' || metadata.code === '25P02';
+}
+
+function isKnownSqlCode(code: string): boolean {
+  return (
+    isKnownPostgresCode(code) ||
+    isKnownMysqlCode(code) ||
+    isKnownSqliteCode(code) ||
+    postgresConnectionCodes.has(code) ||
+    postgresTimeoutCodes.has(code) ||
+    mysqlConnectionCodes.has(code) ||
+    mysqlTimeoutCodes.has(code) ||
+    sqliteConnectionCodes.has(code) ||
+    sqliteTimeoutCodes.has(code)
+  );
+}
+
+function isKnownPostgresCode(code: string): boolean {
+  return (
+    code === '23505' ||
+    code === '23503' ||
+    code === '23502' ||
+    code === '23514' ||
+    code === '25000' ||
+    code === '25001' ||
+    code === '25006' ||
+    code === '25P02'
+  );
+}
+
+function isKnownMysqlCode(code: string): boolean {
+  return code === '1062' || code === '1451' || code === '1452' || code === '1048' || code === '3819';
+}
+
+function isKnownSqliteCode(code: string): boolean {
+  return (
+    code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+    code === 'SQLITE_CONSTRAINT_PRIMARYKEY' ||
+    code === 'SQLITE_CONSTRAINT_FOREIGNKEY' ||
+    code === 'SQLITE_CONSTRAINT_NOTNULL' ||
+    code === 'SQLITE_CONSTRAINT_CHECK' ||
+    code === '2067' ||
+    code === '1555' ||
+    code === '787' ||
+    code === '1299' ||
+    code === '275'
+  );
 }
 
 function compactMetadata(metadata: ErrorMetadata): ErrorMetadata {

@@ -3,12 +3,18 @@ import { mapDatabaseError } from './error-mapper';
 import type { DatabaseError } from './errors';
 
 export interface TransactionRunner<TTransaction> {
-  transaction<TResult>(callback: (transaction: TTransaction) => Promise<TResult>): Promise<TResult>;
+  transaction<TResult>(callback: (transaction: TTransaction) => PromiseLike<TResult>): PromiseLike<TResult>;
 }
 
 export type DatabaseContextValue<TClient, TTransaction> = TClient | TTransaction;
-export type DatabaseQueryCallback<TContext, TResult> = (context: TContext) => Promise<TResult>;
+export type DatabaseQueryCallback<TContext, TResult> = (context: TContext) => PromiseLike<TResult>;
 export type DatabaseTransactionEffect<TResult, TError, TRequirements> = Effect.Effect<TResult, TError, TRequirements>;
+
+export type ScopedDatabaseLayerOptions<TResource, TContext, TAcquireError, TAcquireRequirements, TReleaseRequirements> = {
+  readonly acquire: Effect.Effect<TResource, TAcquireError, TAcquireRequirements>;
+  readonly context: (resource: TResource) => TContext;
+  readonly release: (resource: TResource) => Effect.Effect<void, never, TReleaseRequirements>;
+};
 
 export type DatabaseService<TContext> = {
   readonly run: <TResult>(
@@ -60,6 +66,21 @@ export type DatabaseRuntime<TClient, TTransaction> = {
     | DatabaseClass<DatabaseContextValue<TClient, TTransaction>>
     | TransactionBoundaryClass<DatabaseContextValue<TClient, TTransaction>>
   >;
+  readonly layerScoped: <TResource, TAcquireError = never, TAcquireRequirements = never, TReleaseRequirements = never>(
+    options: ScopedDatabaseLayerOptions<
+      TResource,
+      DatabaseContextValue<TClient, TTransaction>,
+      TAcquireError,
+      TAcquireRequirements,
+      TReleaseRequirements
+    >,
+  ) => Layer.Layer<
+    | DatabaseContextClass<DatabaseContextValue<TClient, TTransaction>>
+    | DatabaseClass<DatabaseContextValue<TClient, TTransaction>>
+    | TransactionBoundaryClass<DatabaseContextValue<TClient, TTransaction>>,
+    TAcquireError,
+    TAcquireRequirements | TReleaseRequirements
+  >;
 };
 
 class TxFailure<TErr> {
@@ -85,7 +106,7 @@ export function makeDatabaseRuntime<
     const context = yield* DatabaseContext;
 
     return yield* Effect.async<TResult, DatabaseError>((resume) => {
-      cb(context)
+      Promise.resolve(cb(context))
         .then((result) => resume(Effect.succeed(result)))
         .catch((cause) => {
           const mapped = mapDatabaseError(cause, 'query');
@@ -102,12 +123,13 @@ export function makeDatabaseRuntime<
     const runPromiseExit = Runtime.runPromiseExit(runtime);
 
     return yield* Effect.async<TResult, TError | DatabaseError, TRequirements>((resume) => {
-      context
-        .transaction(async (tx) => {
+      Promise.resolve(
+        context.transaction(async (tx) => {
           const exit = await runPromiseExit(eff.pipe(Effect.provideService(DatabaseContext, tx)));
           if (Exit.isFailure(exit)) throw new TxFailure(exit.cause);
           return exit.value;
-        })
+        }),
+      )
         .then((result) => resume(Effect.succeed(result)))
         .catch((cause) => {
           if (cause instanceof TxFailure) {
@@ -149,10 +171,27 @@ export function makeDatabaseRuntime<
   const layer = (context: TContext) =>
     Layer.mergeAll(DatabaseContext.layer(context), Database.Default, TransactionBoundary.Default);
 
+  const layerScoped = <
+    TResource,
+    TAcquireError = never,
+    TAcquireRequirements = never,
+    TReleaseRequirements = never,
+  >(
+    options: ScopedDatabaseLayerOptions<TResource, TContext, TAcquireError, TAcquireRequirements, TReleaseRequirements>,
+  ) => {
+    const contextLayer = Layer.scoped(
+      DatabaseContext,
+      Effect.acquireRelease(options.acquire, options.release).pipe(Effect.map(options.context)),
+    );
+
+    return Layer.mergeAll(contextLayer, Database.Default, TransactionBoundary.Default);
+  };
+
   return {
     DatabaseContext,
     Database,
     TransactionBoundary,
     layer,
+    layerScoped,
   } as unknown as DatabaseRuntime<TClient, TTransaction>;
 }

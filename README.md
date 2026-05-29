@@ -62,6 +62,147 @@ const program = Effect.gen(function* () {
 await Effect.runPromise(program.pipe(Effect.provide(DatabaseLive(db))));
 ```
 
+## Database Lifecycle
+
+This package has two separate ways to provide a Drizzle client:
+
+- `Runtime.layer(db)` for clients that are already owned by your application.
+- `Runtime.layerScoped(...)` for clients/resources that should be acquired and released by an Effect scope.
+
+The difference matters. `DatabaseContext` is only the currently active Drizzle handle. It is not automatically a connection owner, pool owner, or shutdown hook.
+
+### App-Level Client
+
+Use `Runtime.layer(db)` when your application owns the client lifecycle.
+
+This is usually the right choice for a long-running Node or Bun server. Create the pool once at process startup, reuse it for requests, and close it during app shutdown.
+
+```ts
+import { Pool } from '@neondatabase/serverless';
+import { drizzle } from 'drizzle-orm/neon-serverless';
+import { Effect, Layer } from 'effect';
+import ws from 'ws';
+
+import * as schema from './schema';
+import { makeDatabaseRuntime } from '@codeva-dev/effect-drizzle';
+import { OtherLive } from './OtherLive';
+
+neonConfig.webSocketConstructor = ws;
+
+const connectionString = process.env.NEON_DB_URL;
+
+if (!connectionString) {
+  throw new Error('NEON_DB_URL is missing');
+}
+
+const pool = new Pool({ connectionString });
+const db = drizzle(pool, { schema });
+
+type DatabaseClient = typeof db;
+type DatabaseTransaction = Parameters<Parameters<DatabaseClient['transaction']>[0]>[0];
+
+export const DBRuntime = makeDatabaseRuntime<DatabaseClient, DatabaseTransaction>();
+
+export const AppLive = Layer.mergeAll(
+  DBRuntime.layer(db),
+  OtherLive,
+);
+
+export async function shutdown() {
+  await pool.end();
+}
+
+export async function handler(request: Request) {
+  return Effect.runPromise(
+    program.pipe(Effect.provide(AppLive)),
+  );
+}
+```
+
+In this mode, `@codeva-dev/effect-drizzle` does not close the pool. Your application owns `pool.end()`.
+
+### Request-Scoped Client
+
+Use `Runtime.layerScoped(...)` when the database resource should live only for the current Effect scope.
+
+This is useful for serverless handlers, CLI scripts, tests, migrations, or any runtime where the driver documentation says that pooling must not be reused across requests.
+
+```ts
+import { Pool, neonConfig } from '@neondatabase/serverless';
+import { drizzle } from 'drizzle-orm/neon-serverless';
+import { Effect, Layer } from 'effect';
+import ws from 'ws';
+
+import * as schema from './schema';
+import { makeDatabaseRuntime } from '@codeva-dev/effect-drizzle';
+import { OtherLive } from './OtherLive';
+
+neonConfig.webSocketConstructor = ws;
+
+function createDatabase(connectionString: string) {
+  const pool = new Pool({ connectionString });
+  const db = drizzle(pool, { schema });
+
+  return { pool, db };
+}
+
+type DatabaseResource = ReturnType<typeof createDatabase>;
+type DatabaseClient = DatabaseResource['db'];
+type DatabaseTransaction = Parameters<Parameters<DatabaseClient['transaction']>[0]>[0];
+
+export const DBRuntime = makeDatabaseRuntime<DatabaseClient, DatabaseTransaction>();
+
+export function makeRequestLive(connectionString: string) {
+  return Layer.mergeAll(
+    DBRuntime.layerScoped({
+      acquire: Effect.sync(() => createDatabase(connectionString)),
+      context: ({ db }) => db,
+      release: ({ pool }) => Effect.promise(() => pool.end()),
+    }),
+    OtherLive,
+  );
+}
+
+export async function handler(request: Request) {
+  const connectionString = process.env.NEON_DB_URL;
+
+  if (!connectionString) {
+    return Response.json(
+      { error: 'NEON_DB_URL is missing' },
+      { status: 500 },
+    );
+  }
+
+  return Effect.runPromise(
+    program.pipe(Effect.provide(makeRequestLive(connectionString))),
+  );
+}
+```
+
+`layerScoped(...)` takes a resource, maps it to the Drizzle context used by queries, and releases the original resource when the Effect scope closes.
+
+```ts
+DBRuntime.layerScoped({
+  acquire: Effect.sync(() => createDatabase(connectionString)),
+  context: ({ db }) => db,
+  release: ({ pool }) => Effect.promise(() => pool.end()),
+});
+```
+
+Use the `context` function when the object needed for release is not the same object that should be provided as `DatabaseContext`. In the example above, queries need `db`, but release needs `pool`.
+
+### Which Lifecycle Should I Use?
+
+| Runtime | Recommended lifecycle |
+| --- | --- |
+| Long-running Node/Bun server | Create one app-level pool and use `Runtime.layer(db)` |
+| TanStack Start on a long-running Node server | Create one app-level pool and use `Runtime.layer(db)` |
+| Serverless handler with WebSocket pooling | Create per-request resource with `Runtime.layerScoped(...)` |
+| Edge/serverless with Neon HTTP | Prefer the driver-recommended client lifecycle, then provide it with `layer` or `layerScoped` |
+| CLI, migration, test process | Prefer `Runtime.layerScoped(...)` so release is guaranteed |
+
+Do not use `layerScoped(...)` to create a new pool per request in a long-running server unless the driver or hosting runtime requires it. For normal long-running Node servers, per-request pool creation loses the benefit of pooling and can increase connection churn.
+
 ## Scope-Aware Transactions
 
 `TransactionBoundary.execute(...)` opens a transaction on the currently provided database context. The transaction client is then provided as the new `DatabaseContext` for the Effect program running inside the closure.

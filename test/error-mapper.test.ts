@@ -48,11 +48,20 @@ describe('mapDatabaseError', () => {
   });
 
   it('returns UnknownSqlError for recognized but uncategorized SQL errors', () => {
-    expect(mapDatabaseError({ code: '99999', message: 'SQL-shaped error' })).toBeInstanceOf(UnknownSqlError);
+    expect(mapDatabaseError({ code: '99999', sql: 'select 1', message: 'SQL-shaped error' })).toBeInstanceOf(
+      UnknownSqlError,
+    );
   });
 
   it('does not map non-SQL errors to typed database errors', () => {
     const cause = new Error('application error');
+
+    expect(isSqlError(cause)).toBe(false);
+    expect(mapDatabaseError(cause)).toBeUndefined();
+  });
+
+  it('does not map arbitrary code-shaped application errors to typed database errors', () => {
+    const cause = { code: 'ABCDE', message: 'not a SQL error' };
 
     expect(isSqlError(cause)).toBe(false);
     expect(mapDatabaseError(cause)).toBeUndefined();

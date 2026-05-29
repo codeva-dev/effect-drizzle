@@ -29,6 +29,7 @@ export {
   type DatabaseRuntime,
   type DatabaseService,
   type DatabaseTransactionEffect,
+  type ScopedDatabaseLayerOptions,
   type TransactionBoundaryClass,
   type TransactionBoundaryService,
   type TransactionRunner,
